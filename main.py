@@ -86,6 +86,30 @@ def parse_json(s):
         m = re.search(r"\{.*\}", s, re.DOTALL)
         return json.loads(m.group(0)) if m else {}
 
+
+def normalize_transcript(transcript: str) -> str:
+    """Fix common ASR mistakes before sending transcript to GPT."""
+
+    fixes = {
+        # Number words
+        "백오게": "백오개의",
+        "백오 개": "백오개의",
+        "백오 계": "백오개의",
+
+        # Common column name mistakes
+        "나의 컬럼": "나이 컬럼",
+        "나의 평균": "나이 평균",
+        "나의": "나이",
+
+        # Add more corrections here as you discover them
+    }
+
+    for wrong, correct in fixes.items():
+        transcript = transcript.replace(wrong, correct)
+
+    return transcript
+
+
 @app.get("/")
 async def root():
     return {"ok": True, "email": EMAIL, "endpoint": "/answer-audio"}
@@ -205,15 +229,11 @@ async def answer_audio(request: Request):
         transcript = ""
         last_debug_info["exception"] = str(e)
 
+    # Normalize known ASR mistakes before doing anything else with the transcript.
+    transcript = normalize_transcript(transcript)
+
     last_debug_info["transcript"] = transcript
-
-    # Fix common Gemini transcription mistakes
-    transcript = transcript.replace("백오게", "백오개의")
-    transcript = transcript.replace("백오 계", "백오개의")
-    transcript = transcript.replace("백오 개", "백오개의")
-
     last_debug_info["transcript_fixed"] = transcript
-
 
     # Step 1: GPT-4o extracts structure + which statistics were stated/requested.
     prompt = (
@@ -277,10 +297,29 @@ async def answer_audio(request: Request):
         last_debug_info["raw_llm"] = raw_llm
         ext = parse_json(raw_llm)
         columns = ext.get("columns", []) or []
+
+        column_fixes = {
+            "나의 컬럼": "나이",
+            "나의": "나이",
+        }
+
+        columns = [column_fixes.get(c, c) for c in columns]
+
         data_rows = ext.get("data_rows", []) or []
         req_stats = ext.get("requested_stats", [])
         num_rows = ext.get("num_rows")
         explicit_stats = ext.get("explicit_stats", {})
+
+        key_fixes = {
+            "나의 컬럼": "나이",
+            "나의": "나이",
+        }
+
+        for stat_name, stat_dict in explicit_stats.items():
+            if isinstance(stat_dict, dict):
+                for old_key, new_key in key_fixes.items():
+                    if old_key in stat_dict:
+                        stat_dict[new_key] = stat_dict.pop(old_key)
     except Exception:
         pass
 
