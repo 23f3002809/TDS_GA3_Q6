@@ -207,6 +207,14 @@ async def answer_audio(request: Request):
 
     last_debug_info["transcript"] = transcript
 
+    # Fix common Gemini transcription mistakes
+    transcript = transcript.replace("백오게", "백오개의")
+    transcript = transcript.replace("백오 계", "백오개의")
+    transcript = transcript.replace("백오 개", "백오개의")
+
+    last_debug_info["transcript_fixed"] = transcript
+
+
     # Step 1: GPT-4o extracts structure + which statistics were stated/requested.
     prompt = (
         "The transcript (Korean) describes a tabular dataset and asks for or states specific statistics. "
