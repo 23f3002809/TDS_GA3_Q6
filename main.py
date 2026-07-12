@@ -97,7 +97,7 @@ def normalize_transcript(transcript: str) -> str:
         "백오 계": "백오개의",
 
         # Common column name mistakes
-        "나의 컬럼": "나이 컬럼",
+        "나의 컬럼": "나이",
         "나의 평균": "나이 평균",
         "나의": "나이",
 
@@ -108,6 +108,32 @@ def normalize_transcript(transcript: str) -> str:
         transcript = transcript.replace(wrong, correct)
 
     return transcript
+
+
+def _clean_column_name(c):
+    """Robust cleanup applied to every extracted column name / stat key.
+
+    Uses substring matching (not exact equality) so it still catches
+    mis-transcribed variants GPT may pass through verbatim (e.g. GPT keeping
+    a literal '나의 컬럼' or appending a descriptor word like '컬럼'/'컬럼명').
+    """
+    if not isinstance(c, str):
+        return c
+    c = c.strip()
+
+    substr_fixes = {
+        "나의 컬럼": "나이",
+        "나의": "나이",
+    }
+    for wrong, correct in substr_fixes.items():
+        if wrong in c:
+            c = c.replace(wrong, correct)
+
+    # Strip a trailing descriptor word like '컬럼'/'컬럼명' if GPT glued it
+    # onto the actual column name (e.g. '나이 컬럼' -> '나이').
+    c = re.sub(r"\s*컬럼(명)?\s*$", "", c).strip()
+
+    return c or c
 
 
 @app.get("/")
@@ -297,28 +323,18 @@ async def answer_audio(request: Request):
         last_debug_info["raw_llm"] = raw_llm
         ext = parse_json(raw_llm)
         columns = ext.get("columns", []) or []
-
-        column_fixes = {
-            "나의 컬럼": "나이",
-            "나의": "나이",
-        }
-
-        columns = [column_fixes.get(c, c) for c in columns]
+        columns = [_clean_column_name(c) for c in columns]
 
         data_rows = ext.get("data_rows", []) or []
         req_stats = ext.get("requested_stats", [])
         num_rows = ext.get("num_rows")
         explicit_stats = ext.get("explicit_stats", {})
 
-        key_fixes = {
-            "나의 컬럼": "나이",
-            "나의": "나이",
-        }
-
         for stat_name, stat_dict in explicit_stats.items():
             if isinstance(stat_dict, dict):
-                for old_key, new_key in key_fixes.items():
-                    if old_key in stat_dict:
+                for old_key in list(stat_dict.keys()):
+                    new_key = _clean_column_name(old_key)
+                    if new_key != old_key:
                         stat_dict[new_key] = stat_dict.pop(old_key)
     except Exception:
         pass
